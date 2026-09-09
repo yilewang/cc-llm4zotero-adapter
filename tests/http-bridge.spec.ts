@@ -25,6 +25,26 @@ async function readNdjsonLines(response: Response): Promise<Array<Record<string,
 }
 
 describe("http bridge server", () => {
+  it("honors the host semantic deadline within the bounded completion limit", async () => {
+    const deadlines: number[] = [];
+    const runtimeClient: ClaudeCodeRuntimeClient = {
+      async startTurn() { return { runId: "fixture", events: providerEvents([]) }; },
+      async completeStructured(request) { deadlines.push(request.timeoutMs); return { text: "{}" }; },
+    };
+    const base = new ClaudeCodeRuntimeAdapter({ runtimeClient, sessionMapper: new InMemorySessionMapper() });
+    const server = await startHttpBridgeServer({ adapter: new Llm4ZoteroAgentBackendAdapter({ adapter: base }) });
+    try {
+      for (const timeoutMs of [180000, 300000, 900000]) {
+        const response = await fetch(`http://${server.host}:${server.port}/structured-completion`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: "Interpret", timeoutMs }),
+        });
+        expect(response.status).toBe(200);
+      }
+      expect(deadlines).toEqual([180000, 300000, 300000]);
+    } finally { await server.close(); }
+  });
+
   it("advertises local PDF path protocol support", async () => {
     const runtimeClient: ClaudeCodeRuntimeClient = {
       async startTurn() {
@@ -44,7 +64,65 @@ describe("http bridge server", () => {
       expect(await response.json()).toMatchObject({
         ok: true,
         protocolVersion: 2,
-        capabilities: ["local_pdf_paths", "model_catalog_v1"],
+        capabilities: ["local_pdf_paths", "model_catalog_v1", "permission_modes_v1"],
+      });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns the Claude Code permission mode catalog", async () => {
+    const runtimeClient: ClaudeCodeRuntimeClient = {
+      async startTurn() {
+        return { runId: "run-permissions", events: providerEvents([]) };
+      },
+      async listPermissionModes() {
+        return {
+          configuredDefaultMode: "plan",
+          modes: [
+            {
+              id: "default",
+              description: "Use standard prompting.",
+              available: true,
+            },
+            {
+              id: "bypassPermissions",
+              description: "Bypass permission checks.",
+              available: false,
+              disabledReason: "Disabled by policy.",
+            },
+          ],
+        };
+      },
+    };
+    const base = new ClaudeCodeRuntimeAdapter({
+      runtimeClient,
+      sessionMapper: new InMemorySessionMapper(),
+    });
+    const server = await startHttpBridgeServer({
+      adapter: new Llm4ZoteroAgentBackendAdapter({ adapter: base }),
+    });
+
+    try {
+      const response = await fetch(
+        `http://${server.host}:${server.port}/permission-modes?settingSources=project,local`,
+      );
+      expect(response.ok).toBe(true);
+      expect(await response.json()).toEqual({
+        configuredDefaultMode: "plan",
+        modes: [
+          {
+            id: "default",
+            description: "Use standard prompting.",
+            available: true,
+          },
+          {
+            id: "bypassPermissions",
+            description: "Bypass permission checks.",
+            available: false,
+            disabledReason: "Disabled by policy.",
+          },
+        ],
       });
     } finally {
       await server.close();

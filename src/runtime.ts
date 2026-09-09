@@ -69,7 +69,29 @@ export interface RuntimeModelCatalog {
   modelInfos?: RuntimeModelInfo[];
 }
 
+export interface RuntimePermissionModeInfo {
+  id:
+    | "default"
+    | "acceptEdits"
+    | "plan"
+    | "auto"
+    | "dontAsk"
+    | "bypassPermissions";
+  description: string;
+  available: boolean;
+  disabledReason?: string;
+}
+
+export interface RuntimePermissionModeCatalog {
+  modes: RuntimePermissionModeInfo[];
+  configuredDefaultMode?: string;
+}
+
+export type StructuredCompletionRequest = { prompt: string; model?: string; timeoutMs: number; signal?: AbortSignal };
+export type StructuredCompletionResult = { text: string };
+
 export interface ClaudeCodeRuntimeClient {
+  completeStructured?(request: StructuredCompletionRequest): Promise<StructuredCompletionResult>;
   startTurn(request: RuntimeTurnRequest): Promise<RuntimeTurnStream>;
   retainHotRuntime?(request: RuntimeTurnRequest, mountId: string): Promise<void>;
   warmHotRuntime?(request: RuntimeTurnRequest): Promise<void>;
@@ -95,6 +117,12 @@ export interface ClaudeCodeRuntimeClient {
       runtimeCwdRelative?: string;
     }
   ): Promise<string[]>;
+  listPermissionModes?(
+    options?: {
+      settingSources?: Array<"user" | "project" | "local">;
+      runtimeCwdRelative?: string;
+    }
+  ): Promise<RuntimePermissionModeCatalog>;
   listMcpServers?(
     options?: {
       settingSources?: Array<"user" | "project" | "local">;
